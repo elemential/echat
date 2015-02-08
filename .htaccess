@@ -1,0 +1,11 @@
+SetEnv no-gzip dont-vary
+
+<Files "*.pem">
+  Order deny,allow
+  Deny from all
+</Files>
+
+<Files "license*.txt">
+  Order deny,allow
+  Deny from all
+</Files>

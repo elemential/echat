@@ -1,0 +1,10 @@
+garbage
+domi
+*~
+#These are identical
+
+#We don't want to store our passwords on GitHub
+config.php
+
+#Random technical stuff, will be deleted
+ssetest.php
