@@ -1,6 +1,6 @@
 // Cryptoblog Chat Communication Controler
 // Copyleft by Elemential 2015
-// Licensed under LGPL 3.0 until somebody changes this line
+// Licensed under LGPL 3.0
 
 if( typeof(Cryptoblog) != "object" )
 {
@@ -14,17 +14,15 @@ Cryptoblog.Chat = function(room,server)
   var peerID = false;
   var fails = 0;
   var retries = 0;
+  var keypair = KEYUTIL.generateKeypair("RSA",1024);
+  var digest = new KJUR.crypto.MessageDigest({alg: "md5"});
+  var comkey = false;
+  var otherPeers = [];
   
   while(server.substr(-1)=="/")
   {
     server=server.substr(0,server.length-1);
   }
-  
-  var keypair = KEYUTIL.generateKeypair("RSA",1024);
-  
-  var digest = new KJUR.crypto.MessageDigest({alg: "md5"});
-  
-  var comkey = false;
   
   var generateToken = function()
   {
@@ -74,6 +72,51 @@ Cryptoblog.Chat = function(room,server)
       "roomid": roomid
     };
     
+    var encryptedMessage = encryptMessage(message);
+    
+    var encodedMessage = "peerid=" + peerID + "&data=" + encodeURIComponent(JSON.stringify(encryptedMessage));
+    
+    var palantir = new XMLHttpRequest();
+    palantir.onreadystatechange = function()
+    {
+      if(palantir.readyState==4 && palantir.status==200)
+      {
+        console.log(palantir.responseText);
+        
+        var data = JSON.parse(palantir.responseText);
+        var message = decryptMessage(data);
+        
+        otherPeers = message;
+        callback(message);
+      }
+    }
+    
+    palantir.open("POST",server + "/enterroom.php",true)
+    palantir.setRequestHeader("Content-type","application/x-www-form-urlencoded");
+    palantir.send(encodedMessage);
+  }
+  
+  var decryptMessage = function(data)
+  {
+    if(data.valid)
+    {
+      var decrypted = "";
+      for(var i in data.data)
+      {
+        decrypted += keypair.prvKeyObj.decrypt( data.data[i] );
+      }
+      var message = JSON.parse(decrypted);
+      var valid = comkey.verify(JSON.stringify(message.message), message.signature);
+      if(valid)
+      {
+        return message.message; //Moon Moon would be proud of this line
+      }
+    }
+    return false;
+  }
+  
+  var encryptMessage = function(message)
+  {
     var token = generateToken();
     
     var signedMessage = {
@@ -81,8 +124,6 @@ Cryptoblog.Chat = function(room,server)
       "token": token,
       "signature": keypair.prvKeyObj.signString(token, "md5")
     };
-    
-    //var encryptedMessage = "data=" + keypair.prvKeyObj.encrypt(JSON.stringify(signedMessage)) + "&id=" + peerID;
     
     var messageChunks = JSON.stringify(signedMessage).match(/.{1,64}/g);
     
@@ -93,25 +134,12 @@ Cryptoblog.Chat = function(room,server)
       encryptedMessage.push(comkey.encrypt(messageChunks[i]));
     }
     
-    var encodedMessage = "peerid=" + peerID + "&data=" + encodeURIComponent(JSON.stringify(encryptedMessage));
-    
-    var palantir = new XMLHttpRequest();
-    palantir.onreadystatechange = function()
-    {
-      if(palantir.readyState==4 && palantir.status==200)
-      {
-        callback();
-      }
-    }
-    
-    palantir.open("POST",server + "/enterroom.php",true)
-    palantir.setRequestHeader("Content-type","application/x-www-form-urlencoded");
-    palantir.send(encodedMessage);
+    return encryptedMessage;
   }
   
   getID(function(){
-    enterRoom(chatroom,function(){
-      console.log("I'm in.");
+    enterRoom(chatroom,function(message){
+      console.log(message);
     });
   });
   

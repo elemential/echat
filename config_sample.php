@@ -1,4 +1,8 @@
 <?
+  // Cryptoblog Configuration File
+  // Copyleft by Elemential 2015
+  // Licensed under LGPL 3.0
+  
   error_reporting(E_ERROR | E_PARSE); //nope
   
   class CryptoblogConfig

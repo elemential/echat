@@ -1,4 +1,8 @@
 <?
+  // Cryptoblog Token-based Verifier Class
+  // Copyleft by Elemential 2015
+  // Licensed under LGPL 3.0
+  
   require_once("config.php");
   
   class CryptoblogVerifier

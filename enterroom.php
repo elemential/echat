@@ -1,39 +1,45 @@
 <?
+  // Cryptoblog Chatroom Entering Interface
+  // Copyleft by Elemential 2015
+  // Licensed under LGPL 3.0
+  
   require_once("config.php");
   require_once("verify.php");
+  require_once("message.php");
   
   $return_value = [ "valid" => false ];
   
   $con = CryptoblogConfig::getConnection();
   
-  $query = "SELECT pubkey,comkey FROM " . CryptoblogConfig::getTableName("peers") . " WHERE id=" . intval($_REQUEST['peerid']);
-  $result = $con -> query($query);
+  $inputMessage = new CryptoblogMessage($_REQUEST['data'], $_REQUEST['peerid'], CryptoblogMessage::ENCRYPTED);
   
-  if( $row = $result -> fetch_assoc() )
+  if( $inputMessage -> getValid() ) //$row = $result -> fetch_assoc()
   {
-    $pubkey = openssl_get_publickey( $row['pubkey'] );
-    $comkey = openssl_get_privatekey( $row['comkey'], CryptoblogConfig::RSA_PASSPHARSE );
     
-    $encrypted = json_decode($_REQUEST['data']);
-    $decrypted = "";
-    
-    foreach($encrypted as $chunk)
-    {
-      openssl_private_decrypt( hex2bin($chunk), $decrypted_chunk, $comkey );
-      $decrypted .= $decrypted_chunk;
-    }
-    
-    $data = json_decode($decrypted,true);
-    
-    $verifier = new CryptoblogVerifier(CryptoblogConfig::TABLE_PREFIX);
-    $valid = $verifier -> verify($pubkey,$data["token"],$data["signature"]);
+    $data = $inputMessage -> getMessage();
+    $valid = $inputMessage -> getValid();
     
     if($valid)
     {
-      $query = "UPDATE " . CryptoblogConfig::getTableName("peers") . " SET room=" . $data["message"]["roomid"] . " WHERE id=" . intval($_REQUEST['peerid']);
+      $query = "UPDATE " . CryptoblogConfig::getTableName("peers") . " SET room=" . intval($data["message"]["roomid"]) . " WHERE id=" . intval($_REQUEST['peerid']);
       $result = $con -> query($query);
       
-      $return_value["valid"] = $valid;
+      $query = "SELECT id,pubkey FROM " . CryptoblogConfig::getTableName("peers") . " WHERE room=" . intval($data["message"]["roomid"]) . " AND UNIX_TIMESTAMP(last)>" . (time()-60);
+      $result = $con -> query($query);
+      
+      $peers = [];
+      while($row = $result -> fetch_assoc())
+      {
+        $peers[] = [
+          "id" => $row["id"],
+          "key" => $row["pubkey"]
+        ];
+      }
+      
+      $message = new CryptoblogMessage($peers, $_REQUEST['peerid'], CryptoblogMessage::DECRYPTED);
+      
+      $return_value["data"] = $message -> getMessage();
+      $return_value["valid"] = $message -> getValid();
     }
   }
   
