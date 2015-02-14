@@ -54,6 +54,8 @@
       
       if( ! $this -> verifyData($decrypted, $pubkey) ) return $this -> ragequit();
       
+      $decrypted["message"] = json_decode($decrypted["message"], true);
+      
       $this -> message = $decrypted;
       $this -> valid = true;
     }
@@ -83,8 +85,9 @@
     
     private function verifyData($data, $key)
     {
-      $verifier = new CryptoblogVerifier(CryptoblogConfig::TABLE_PREFIX);
-      return $verifier -> verify($key,$data["token"],$data["signature"]);
+      return openssl_verify( $data["message"], hex2bin($data["signature"]), $key, OPENSSL_ALGO_MD5 ) == 1;
+      //$verifier = new CryptoblogVerifier(CryptoblogConfig::TABLE_PREFIX);
+      //return $verifier -> verify($key,$data["token"],$data["signature"]);
     }
     
     private function encryptData($data, $key)

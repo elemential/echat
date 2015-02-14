@@ -19,8 +19,6 @@
   {
     $data = $inputMessage -> getMessage();
     
-    sleep(1);
-    
     $query = sprintf(
       "UPDATE %1\$s
       SET last = CURRENT_TIMESTAMP
@@ -46,11 +44,6 @@
       $_REQUEST['peerid'],
       time()-10);
     $result = $con -> query($query);
-    
-    if($con -> errno)
-    {
-      die($con -> error);
-    }
     
     $peers = [];
     while($row = $result -> fetch_assoc())
@@ -79,6 +72,28 @@
         "link" => $row['link']
       ];
     }
+    
+    $query = sprintf(
+      "SELECT id,sender,content
+      FROM %1\$s
+      WHERE recipient = %2\$s
+      AND seen = FALSE",
+      CryptoblogConfig::getTableName("negotiations"),
+      $_REQUEST['peerid']);
+    $result = $con -> query($query);
+    
+    $negotiations = [];
+    while($row = $result -> fetch_assoc())
+    {
+      $negotiations[] = [
+        "id" => $row['id'],
+        "sender" => $row["sender"],
+        "content" => $row["content"]
+      ];
+    }
+    
+    $return_data["negotiations"] = $negotiations;
+      
     
     $message = new CryptoblogMessage($return_data, $_REQUEST['peerid'], CryptoblogMessage::DECRYPTED);
     
