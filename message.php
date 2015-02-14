@@ -2,7 +2,7 @@
   // Cryptoblog Encrypted Message Class
   // Copyleft by Elemential 2015
   // Licensed under LGPL 3.0
-
+  
   require_once("config.php");
   require_once("verify.php");
   

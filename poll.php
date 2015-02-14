@@ -9,6 +9,8 @@
   
   $return_value = [ "valid" => false ];
   
+  header("Content-type: application/json");
+  
   $con = CryptoblogConfig::getConnection();
   
   $inputMessage = new CryptoblogMessage($_REQUEST['data'], $_REQUEST['peerid'], CryptoblogMessage::ENCRYPTED);
@@ -60,6 +62,23 @@
     }
     
     $return_data["peers"] = $peers;
+    
+    $query = sprintf(
+      "SELECT name,link
+      FROM %1\$s
+      WHERE id = %2\$d",
+      CryptoblogConfig::getTableName("rooms"),
+      $roomid
+    );
+    $result = $con -> query($query);
+    
+    if($row = $result -> fetch_assoc())
+    {
+      $return_data["room"] = [
+        "name" => $row['name'],
+        "link" => $row['link']
+      ];
+    }
     
     $message = new CryptoblogMessage($return_data, $_REQUEST['peerid'], CryptoblogMessage::DECRYPTED);
     

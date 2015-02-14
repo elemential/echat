@@ -18,7 +18,13 @@
     
     public function verify($key,$token,$signature)
     {
-      $query = "SELECT time FROM " . $this->prefix . "verifications WHERE token='" . $this -> con -> real_escape_string($token) . "'";
+      $query = sprintf(
+        "SELECT time
+        FROM %1\$sverifications
+        WHERE token='%2\$s'",
+        $this->prefix,
+        $this -> con -> real_escape_string($token)
+        );
       $result = $this -> con -> query($query);
       
       $valid = ! $result -> num_rows;
@@ -29,7 +35,13 @@
         
         if($key_valid)
         {
-          $query = "INSERT INTO " . $this->prefix . "verifications(token) VALUES ('" . $this -> con -> real_escape_string($token) . "')";
+          $query = sprintf(
+            "INSERT INTO %1\$sverifications(token)
+            VALUES (
+              '%2\$s'
+            )",
+          $this->prefix,
+          $this -> con -> real_escape_string($token));
           $result = $this -> con -> query($query);
         }
       }

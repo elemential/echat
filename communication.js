@@ -2,12 +2,14 @@
 // Copyleft by Elemential 2015
 // Licensed under LGPL 3.0
 
+"use strict"; //I like to live dangerously
+
 if( typeof(Cryptoblog) != "object" )
 {
-  Cryptoblog = {};
+  var Cryptoblog = {};
 }
 
-Cryptoblog.Chat = function(room,server)
+Cryptoblog.Chat = function(room,server,newroom)
 {
   var server = server || "http://elemential.net/cryptoblog/chat";
   var chatroom = room;
@@ -18,6 +20,8 @@ Cryptoblog.Chat = function(room,server)
   var digest = new KJUR.crypto.MessageDigest({alg: "md5"});
   var comkey = false;
   var otherPeers = [];
+  var writePoll = false;
+  var roomName = "";
   
   while(server.substr(-1)=="/")
   {
@@ -81,17 +85,49 @@ Cryptoblog.Chat = function(room,server)
     {
       if(palantir.readyState==4 && palantir.status==200)
       {
-        console.log(palantir.responseText);
+        //console.log(palantir.responseText);
         
         var data = JSON.parse(palantir.responseText);
         var message = decryptMessage(data);
         
-        otherPeers = message;
+        otherPeers = message.peers;
+        room = message.roomlink;
+        
         callback(message);
       }
     }
     
     palantir.open("POST",server + "/enterroom.php",true)
+    palantir.setRequestHeader("Content-type","application/x-www-form-urlencoded");
+    palantir.send(encodedMessage);
+  }
+  
+  var renameRoom = function(name,callback)
+  {
+    var message = {
+      "name": name
+    };
+    
+    var encryptedMessage = encryptMessage(message);
+    
+    var encodedMessage = "peerid=" + peerID + "&data=" + encodeURIComponent(JSON.stringify(encryptedMessage));
+    
+    var palantir = new XMLHttpRequest();
+    palantir.onreadystatechange = function()
+    {
+      if(palantir.readyState==4 && palantir.status==200)
+      {
+        var data = JSON.parse(palantir.responseText);
+        var message = decryptMessage(data);
+        
+        chatroom = message.link;
+        roomName = message.name;
+        
+        callback(message);
+      }
+    }
+    
+    palantir.open("POST",server + "/renameroom.php",true)
     palantir.setRequestHeader("Content-type","application/x-www-form-urlencoded");
     palantir.send(encodedMessage);
   }
@@ -137,20 +173,86 @@ Cryptoblog.Chat = function(room,server)
     return encryptedMessage;
   }
   
-  getID(function(){
-    enterRoom(chatroom,function(message){
-      console.log(message);
-    });
-  });
+  var poll = function()
+  {
+    var message = {};
+    
+    var encodedMessage = "peerid=" + peerID + "&data=" + encodeURIComponent( JSON.stringify( encryptMessage(message) ) );
+    
+    var palantir = new XMLHttpRequest();
+    palantir.onreadystatechange = function()
+    {
+      if(palantir.readyState==4 && palantir.status==200)
+      {
+        if(writePoll)
+        {
+          console.log(palantir.responseText);
+        }
+        
+        var data = JSON.parse(palantir.responseText);
+        var message = decryptMessage(data);
+        
+        otherPeers = message.peers;
+        
+        chatroom = message.room.link;
+        roomName = message.room.name;
+        
+        console.log(message.peers.length + " other users online");
+        
+        if(writePoll)
+        {
+          writePoll = false;
+          console.log(message);
+        }
+      }
+    }
+    
+    palantir.open("POST",server + "/poll.php",true)
+    palantir.setRequestHeader("Content-type","application/x-www-form-urlencoded");
+    palantir.send(encodedMessage);
+  }
   
-  this.getRoom = function()
+  var step1 = function() //Negotiate ID with server
+  {
+    setInterval(poll,1000);
+    
+    if(newroom)
+    {
+      renameRoom(chatroom,function(message){
+        enterRoom(message.link,step2);
+      });
+    }
+    else
+    {
+      enterRoom(chatroom,step2);
+    }
+  }
+  
+  var step2 = function(message)
+  {
+    console.log(message);
+  }
+  
+  getID(step1);
+  
+  this.getLink = function()
   {
     return room;
   }
   
-  this.joinRoom = function(roomid)
+  this.getRoomName = function()
   {
-    enterRoom(roomid);
+    return roomName;
+  }
+  
+  this.setRoomName = function(name,callback)
+  {
+    renameRoom(name,callback);
+  }
+  
+  this.joinRoom = function(roomid,callback)
+  {
+    enterRoom(roomid,callback);
   }
   
   this.getServer = function()
@@ -161,5 +263,10 @@ Cryptoblog.Chat = function(room,server)
   this.getID = function()
   {
     return peerID;
+  }
+  
+  this.writeNextPoll = function()
+  {
+    writePoll = true;
   }
 }
