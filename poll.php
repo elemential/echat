@@ -59,9 +59,15 @@
     $query = sprintf(
       "SELECT name,link
       FROM %1\$s
-      WHERE id = %2\$d",
+      WHERE id = (
+        SELECT room
+        FROM %2\$s
+        WHERE id = %3\$d
+        LIMIT 1
+      )",
       CryptoblogConfig::getTableName("rooms"),
-      $roomid
+      CryptoblogConfig::getTableName("peers"),
+      $_REQUEST['peerid']
     );
     $result = $con -> query($query);
     

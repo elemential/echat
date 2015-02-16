@@ -20,8 +20,10 @@ Cryptoblog.Chat = function(room,server,newroom)
   var digest = new KJUR.crypto.MessageDigest({alg: "md5"});
   var comkey = false;
   var otherPeers = [];
+  var lastPeers = [];
   var writePoll = false;
   var roomName = "";
+  var receivedNegotiations = [];
   
   while(server.substr(-1)=="/")
   {
@@ -220,10 +222,36 @@ Cryptoblog.Chat = function(room,server,newroom)
       for(var i in message.negotiations)
       {
         seeNegotiation(message.negotiations[i].id);
-        receiveNegotiation(message.negotiations[i].content,message.negotiations[i].sender);
+        if( receivedNegotiations.indexOf( message.negotiations[i].id ) < 0 )
+        {
+          receiveNegotiation(message.negotiations[i].content,message.negotiations[i].sender);
+        }
+        receivedNegotiations.push( message.negotiations[i].id );
       }
       
       console.log(message.peers.length + " other users online");
+      
+      for(var i in otherPeers)
+      {
+        if(lastPeers.indexOf(otherPeers[i].id)<0)
+        {
+          addPeer(otherPeers[i].id);
+        }
+      }
+      
+      for(var i in lastPeers)
+      {
+        if(!getPeerById(lastPeers[i]))
+        {
+          removePeer(lastPeers[i]);
+        }
+      }
+      
+      lastPeers = [];
+      for(var i in otherPeers)
+      {
+        lastPeers.push(otherPeers[i].id);
+      }
       
       if(writePoll)
       {
@@ -241,7 +269,7 @@ Cryptoblog.Chat = function(room,server,newroom)
       'recipient': peer
     }, function(message){
       
-      console.log(message);
+      //It should be {success: true}
       
     },"negotiate.php");
   }
@@ -253,7 +281,50 @@ Cryptoblog.Chat = function(room,server,newroom)
       "valid": "true"
     };
     var negotiation = JSON.parse(decryptMessage(data, peer));
-    console.log( peer, negotiation );
+    
+    if(negotiation.type)
+    {
+      var rtcPeer = rtcPeers[peer];
+      
+      //console.log(negotiation);
+      
+      if(negotiation.type == "professional-diplomacy")
+      {
+        setRps(peer, negotiation.content, false);
+      }
+      else if(negotiation.type == 'challenge')
+      {
+        negotiateLikeABoss(peer);
+      }
+      else if(negotiation.type == 'offer')
+      {
+        rtcPeer.setRemoteDescription( new RTCSessionDescription(negotiation.content) );
+        rtcPeer.createAnswer( function(answer){
+          rtcPeer.setLocalDescription(answer);
+          sendNegotiation({
+            'type':'answer',
+            'content':answer
+          },peer);
+        });
+      }
+      else if(negotiation.type == 'answer')
+      {
+        rtcPeer.setRemoteDescription( new RTCSessionDescription(negotiation.content) );
+        if(!rtcChannels[peer])
+        {
+          var channel = rtcPeer.createDataChannel("cryptoblog-chat",rtcOptions);
+          setupChannel(channel, peer);
+        }
+      }
+      else if(negotiation.type == 'candidate') //Yes, I hate switches
+      {
+        rtcPeer.addIceCandidate( new RTCIceCandidate(negotiation.content) );
+      }
+    }
+    else
+    {
+      console.log( peer, negotiation );
+    }
   }
   
   var seeNegotiation = function(id)
@@ -264,6 +335,140 @@ Cryptoblog.Chat = function(room,server,newroom)
       //They saw we saw that we saw what they wanted us to see
       //But they won't see we saw they saw we saw that we saw what they wanted us to see
     },"see.php");
+  }
+  
+  var addPeer = function(user)
+  {
+    console.log(user + " joined the conversation");
+    step3(user);
+  }
+  
+  var removePeer = function(user)
+  {
+    console.log(user + " left the conversation");
+  }
+  
+  //Brace yourselves, WebRTC is coming
+  
+  var rtcConfig={
+    'iceServers':[
+      {url:'stun:stun.l.google.com:19302'},
+      {url:'stun:stun1.l.google.com:19302'},
+      {url:'stun:stun2.l.google.com:19302'},
+      {url:'stun:stun3.l.google.com:19302'},
+      {url:'stun:stun4.l.google.com:19302'},
+      {
+        url: 'turn:numb.viagenie.ca',
+        credential: 'muazkh',
+        username: 'webrtc@live.com'
+      },
+      {
+        url: 'turn:192.158.29.39:3478?transport=udp',
+        credential: 'JZEOEt2V3Qb0y27GRntt2u2PAYA=',
+        username: '28224511:1379330808'
+      },
+      {
+        url: 'turn:192.158.29.39:3478?transport=tcp',
+        credential: 'JZEOEt2V3Qb0y27GRntt2u2PAYA=',
+        username: '28224511:1379330808'
+      }
+    ],
+    "iceTransports":"all"
+  };
+  
+  var rtcMediaConstraints = {
+    optional: [],
+    mandatory: {
+      OfferToReceiveAudio: true,
+      OfferToReceiveVideo: true
+    }
+  };
+  
+  var rtcOptions={
+    ordered: false, // do not guarantee order
+  };
+  
+  var RTCPeerConnection = window.mozRTCPeerConnection || window.webkitRTCPeerConnection || window.RTCPeerConnection;
+  var RTCSessionDescription = window.mozRTCSessionDescription || window.RTCSessionDescription;
+  var RTCIceCandidate = window.mozRTCIceCandidate || window.RTCIceCandidate;
+  
+  var rtcPeers = {};
+  var rtcChannels = {};
+  
+  var onError = function(error)
+  {
+    //console.error(error);
+  }
+  
+  var sendOffer = function(peer, rtcPeer)
+  {
+    rtcPeer.createOffer( function(offer){
+      rtcPeer.setLocalDescription(offer);
+      sendNegotiation({
+        'type':'offer',
+        'content':offer
+      },peer);
+    });
+  }
+  
+  var rps = {};
+  
+  var negotiateLikeABoss = function(peer) // The coolest code I ever wrote
+  {
+    var playables = ["rock","paper","scrissors"];
+    var choice = playables[Math.floor(Math.random()*playables.length)];
+    
+    setRps(peer, choice, true);
+    
+    sendNegotiation({
+      "type":"professional-diplomacy",
+      "content":choice
+    },peer);
+  }
+  
+  var setRps = function(peer, choice, local)
+  {
+    if(!rps[peer])
+    {
+      rps[peer]={
+        "jedi":"",
+        "sith":"",
+        "local":0,
+        "remote":0
+      };
+    }
+    
+    if(local)
+    {
+      rps[peer].jedi = choice;
+      rps[peer].local++;
+    }
+    else
+    {
+      rps[peer].sith = choice;
+      rps[peer].remote++;
+    }
+    
+    if( (rps[peer].local == rps[peer].remote) && rps[peer].local )
+    {
+      var playables = ["rock","paper","scrissors"];
+      var beats = ["paper","scrissors","rock"];
+      
+      var status = "lost";
+      
+      if( rps[peer].jedi == rps[peer].sith )
+      {
+        negotiateLikeABoss(peer);
+        status = "draw";
+      }
+      else if( beats.indexOf( rps[peer].jedi ) == playables.indexOf( rps[peer].sith ) )
+      {
+        sendOffer(peer, rtcPeers[peer]);
+        status = "won";
+      }
+      
+      console.log( "Match against " + peer + ": " + rps[peer].jedi + " vs " + rps[peer].sith + ", " + status );
+    }
   }
   
   var step1 = function() //Negotiate ID with server
@@ -282,47 +487,116 @@ Cryptoblog.Chat = function(room,server,newroom)
     }
   }
   
-  var step2 = function(message)
+  var step2 = function(message) //Well, don't do sh[\w^i]t, let the other events work too
   {
-    console.log(message);
+    console.log(message); //Maybe later we could fire an event here
+  }
+  
+  var step3 = function(peer)
+  {
+    var rtcPeer = new RTCPeerConnection(rtcConfig);
+    
+    rtcPeer.onError = onError ;
+    
+    rtcPeer.onicecandidate = function(event)
+    {
+      if(event.candidate)
+      {
+        sendNegotiation({
+          'type':'candidate',
+          'content':event.candidate
+        },peer);
+      }
+    }
+    
+    rtcPeer.onnegotiationneeded = function(event)
+    {
+      /*sendNegotiation({
+        'type':'challenge',
+        'content':'Fight me RPS!'
+      },peer);
+      negotiateLikeABoss(peer);*/
+      //console.log('Aggressive negotiations in progress...');
+      sendOffer(peer, rtcPeer);
+    }
+    
+    rtcPeer.ondatachannel = function(event)
+    {
+      setupChannel(event.channel, peer);
+    }
+    
+    rtcPeers[peer] = rtcPeer;
+    
+    //sendOffer(peer, rtcPeer);
+    negotiateLikeABoss(peer);
+  }
+  
+  var setupChannel = function(channel, peer)
+  {
+    channel.onopen=function()
+    {
+      console.log("Channel of peer "+peer+" opened");
+    }
+    channel.onclose=function()
+    {
+      console.log("Channel of peer "+peer+" closed");
+    }
+    channel.onerror=function()
+    {
+      console.log("Channel of peer "+peer+" got an error");
+    }
+    channel.onmessage=function(event)
+    {
+      console.log("Channel of peer "+peer+" got a message: "+event.data);
+    }
+    rtcChannels[peer]=channel;
+    //console.log(rtcChannels[peer]);
   }
   
   getID(step1);
   
+  this.sendTo = function(message, peer)
+  {
+    if(rtcChannels[peer])
+    {
+      rtcChannels[peer].send(message) 
+    }
+  };
+  
   this.getLink = function()
   {
-    return room;
-  }
+    return chatroom;
+  };
   
   this.getRoomName = function()
   {
     return roomName;
-  }
+  };
   
   this.setRoomName = function(name, callback)
   {
-    renameRoom(name, callback);
-  }
+    renameRoom(name, callback || new Function());
+  };
   
   this.joinRoom = function(roomid, callback)
   {
     enterRoom(roomid, callback);
-  }
+  };
   
   this.getServer = function()
   {
     return server;
-  }
+  };
   
   this.getID = function()
   {
     return peerID;
-  }
+  };
   
   this.negotiate = function(message, peer)
   {
     sendNegotiation(message,peer);
-  }
+  };
   
   this.listRoom = function()
   {
@@ -332,10 +606,10 @@ Cryptoblog.Chat = function(room,server,newroom)
       list.push(otherPeers[i].id);
     }
     return list;
-  }
+  };
   
   this.writeNextPoll = function()
   {
     writePoll = true;
-  }
+  };
 }
