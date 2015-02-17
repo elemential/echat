@@ -24,6 +24,8 @@ Cryptoblog.Chat = function(room,server,newroom)
   var writePoll = false;
   var roomName = "";
   var receivedNegotiations = [];
+  var eventListeners = [];
+  var ready = false;
   
   while(server.substr(-1)=="/")
   {
@@ -216,6 +218,13 @@ Cryptoblog.Chat = function(room,server,newroom)
       
       otherPeers = message.peers;
       
+      if(message.room.name != roomName)
+      {
+        var e = new CustomEvent("cryptoblog-chat-room");
+        e.data = Number(message.room.name);
+        fireEventListeners("room",e);
+      }
+      
       chatroom = message.room.link;
       roomName = message.room.name;
       
@@ -252,6 +261,8 @@ Cryptoblog.Chat = function(room,server,newroom)
       {
         lastPeers.push(otherPeers[i].id);
       }
+      
+      sendStack();
       
       if(writePoll)
       {
@@ -298,27 +309,38 @@ Cryptoblog.Chat = function(room,server,newroom)
       }
       else if(negotiation.type == 'offer')
       {
-        rtcPeer.setRemoteDescription( new RTCSessionDescription(negotiation.content) );
-        rtcPeer.createAnswer( function(answer){
-          rtcPeer.setLocalDescription(answer);
-          sendNegotiation({
-            'type':'answer',
-            'content':answer
-          },peer);
+        rtcPeer.setRemoteDescription( new RTCSessionDescription(negotiation.content), function() {
+          rtcPeer.createAnswer( function(answer){
+            rtcPeer.setLocalDescription(answer, function(){
+              sendNegotiation({
+                'type':'answer',
+                'content':answer
+              },peer);
+            });
+          });
         });
       }
       else if(negotiation.type == 'answer')
       {
-        rtcPeer.setRemoteDescription( new RTCSessionDescription(negotiation.content) );
-        if(!rtcChannels[peer])
-        {
-          var channel = rtcPeer.createDataChannel("cryptoblog-chat",rtcOptions);
-          setupChannel(channel, peer);
-        }
+        rtcPeer.setRemoteDescription( new RTCSessionDescription(negotiation.content), function(){
+          if(!rtcChannels[peer])
+          {
+            var channel = rtcPeer.createDataChannel("cryptoblog-chat",rtcOptions);
+            setupChannel(channel, peer);
+          }
+        });
       }
       else if(negotiation.type == 'candidate') //Yes, I hate switches
       {
-        rtcPeer.addIceCandidate( new RTCIceCandidate(negotiation.content) );
+        try
+        {
+          rtcPeer.addIceCandidate( new RTCIceCandidate( JSON.parse( decodeURIComponent(negotiation.content) ) ) );
+          console.log('Candidate added successfully');
+        }
+        catch(error)
+        {
+          console.log('Candidate problems',error);
+        }
       }
     }
     else
@@ -340,23 +362,43 @@ Cryptoblog.Chat = function(room,server,newroom)
   var addPeer = function(user)
   {
     console.log(user + " joined the conversation");
+    var e = new CustomEvent("cryptoblog-chat-join");
+    e.data = Number(user);
+    fireEventListeners("join",e);
     step3(user);
   }
   
   var removePeer = function(user)
   {
     console.log(user + " left the conversation");
+    var e = new CustomEvent("cryptoblog-chat-leave");
+    e.data = Number(user);
+    fireEventListeners("leave",e);
   }
   
   //Brace yourselves, WebRTC is coming
   
   var rtcConfig={
     'iceServers':[
+      {url:'stun:stun01.sipphone.com'},
+      {url:'stun:stun.ekiga.net'},
+      {url:'stun:stun.fwdnet.net'},
+      {url:'stun:stun.ideasip.com'},
+      {url:'stun:stun.iptel.org'},
+      {url:'stun:stun.rixtelecom.se'},
+      {url:'stun:stun.schlund.de'},
       {url:'stun:stun.l.google.com:19302'},
       {url:'stun:stun1.l.google.com:19302'},
       {url:'stun:stun2.l.google.com:19302'},
       {url:'stun:stun3.l.google.com:19302'},
       {url:'stun:stun4.l.google.com:19302'},
+      {url:'stun:stunserver.org'},
+      {url:'stun:stun.softjoys.com'},
+      {url:'stun:stun.voiparound.com'},
+      {url:'stun:stun.voipbuster.com'},
+      {url:'stun:stun.voipstunt.com'},
+      {url:'stun:stun.voxgratia.org'},
+      {url:'stun:stun.xten.com'},
       {
         url: 'turn:numb.viagenie.ca',
         credential: 'muazkh',
@@ -394,6 +436,7 @@ Cryptoblog.Chat = function(room,server,newroom)
   
   var rtcPeers = {};
   var rtcChannels = {};
+  var rtcOpen = 0;
   
   var onError = function(error)
   {
@@ -458,16 +501,85 @@ Cryptoblog.Chat = function(room,server,newroom)
       
       if( rps[peer].jedi == rps[peer].sith )
       {
-        negotiateLikeABoss(peer);
         status = "draw";
       }
       else if( beats.indexOf( rps[peer].jedi ) == playables.indexOf( rps[peer].sith ) )
       {
-        sendOffer(peer, rtcPeers[peer]);
         status = "won";
       }
       
       console.log( "Match against " + peer + ": " + rps[peer].jedi + " vs " + rps[peer].sith + ", " + status );
+      
+      if(status == "draw")
+      { 
+        negotiateLikeABoss(peer);
+      }
+      
+      if(status == "won")
+      {
+        sendOffer(peer, rtcPeers[peer]);
+      }
+    }
+  }
+  
+  var messageStack = [];
+  
+  var stackMessage = function(message)
+  {
+    for(var i in otherPeers)
+    {
+      messageStack.push({
+        "message": message,
+        "peer": otherPeers[i].id
+      });
+    }
+    sendStack();
+  }
+  
+  var sendStack = function()
+  {
+    for(var i in messageStack)
+    {
+      var message = messageStack[i];
+      
+      if(rtcChannels[message.peer] && rtcChannels[message.peer].readyState == "open")
+      {
+        rtcChannels[message.peer].send(JSON.stringify(message.message));
+        messageStack.splice(messageStack.indexOf(message),1);
+      }
+      
+      console.log("Sending message",message);
+    }
+  }
+  
+  var fireEventListeners = function(type, event)
+  {
+    if(!ready) return;
+    for(var i in eventListeners)
+    {
+      if(eventListeners[i].type == type)
+      {
+        eventListeners[i].callback.call(this, event);
+      }
+    }
+  }
+  
+  this.addEventListener = function(type, callback)
+  {
+    eventListeners.push({
+      "type":type,
+      "callback":callback
+    });
+  }
+  
+  this.removeEventListener = function(callback)
+  {
+    for(var i=eventListeners.length-1;i>=0;i--)
+    {
+      if(eventListeners[i].callback == callback)
+      {
+        eventListeners.splice(i,1);
+      }
     }
   }
   
@@ -503,8 +615,8 @@ Cryptoblog.Chat = function(room,server,newroom)
       if(event.candidate)
       {
         sendNegotiation({
-          'type':'candidate',
-          'content':event.candidate
+          'type': 'candidate',
+          'content': encodeURIComponent( JSON.stringify( event.candidate ) )
         },peer);
       }
     }
@@ -533,34 +645,54 @@ Cryptoblog.Chat = function(room,server,newroom)
   
   var setupChannel = function(channel, peer)
   {
+    var channels = rtcChannels;
+    
     channel.onopen=function()
     {
-      console.log("Channel of peer "+peer+" opened");
+      //console.log("Channel of peer "+peer+" opened");
+      rtcOpen++;
+      
+      if(!ready && rtcOpen >= otherPeers.length)
+      {
+        ready = true;
+        //console.log("I'm in");
+        
+        var e = new CustomEvent("cryptoblog-chat-ready");
+        fireEventListeners("ready",e);
+      }
+      
+      sendStack();
     }
     channel.onclose=function()
     {
-      console.log("Channel of peer "+peer+" closed");
+      //console.log("Channel of peer "+peer+" closed");
+      rtcOpen--;
+      
+      delete rtcChannels[peer]; //Memory handling like a (boss|C++ programmer)
     }
     channel.onerror=function()
     {
-      console.log("Channel of peer "+peer+" got an error");
+      //console.log("Channel of peer "+peer+" got an error");
     }
     channel.onmessage=function(event)
     {
-      console.log("Channel of peer "+peer+" got a message: "+event.data);
+      //console.log("Channel of peer "+peer+" got a message: "+event.data);
+      var e = new CustomEvent("cryptoblog-chat-receive");
+      e.data = JSON.parse(event.data);
+      e.peer = Number(peer);
+      fireEventListeners("receive",e);
     }
     rtcChannels[peer]=channel;
-    //console.log(rtcChannels[peer]);
   }
   
   getID(step1);
   
-  this.sendTo = function(message, peer)
+  this.send = function(message)
   {
-    if(rtcChannels[peer])
-    {
-      rtcChannels[peer].send(message) 
-    }
+    stackMessage({
+      "type": "message",
+      "content": message
+    });
   };
   
   this.getLink = function()
