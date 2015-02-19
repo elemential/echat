@@ -96,13 +96,13 @@ Cryptoblog.Chat = function(room,server,newroom)
           
           if(!data.valid)
           {
-            console.error('Invalid data');
+            if(Cryptoblog.logging) console.error('Invalid data');
           }
         }
         catch(err)
         {
-          console.error(err);
-          console.log(palantir.responseText);
+          if(Cryptoblog.logging) console.error(err);
+          if(Cryptoblog.logging) console.log(palantir.responseText);
         }
         finally
         {
@@ -238,7 +238,7 @@ Cryptoblog.Chat = function(room,server,newroom)
         receivedNegotiations.push( message.negotiations[i].id );
       }
       
-      console.log(message.peers.length + " other users online");
+      if(Cryptoblog.logging) console.log(message.peers.length + " other users online");
       
       for(var i in otherPeers)
       {
@@ -332,20 +332,44 @@ Cryptoblog.Chat = function(room,server,newroom)
       }
       else if(negotiation.type == 'candidate') //Yes, I hate switches
       {
+        var serialized = JSON.parse( decodeURIComponent(negotiation.content) );
+        //console.log( serialized );
+        //serialized.candidate = serialized.candidate.split(" ").join(" "); //It doesn't make sense but I don't know if I should touch the magic or not
+        var candidate = new RTCIceCandidate( serialized );
+        
         try
         {
-          rtcPeer.addIceCandidate( new RTCIceCandidate( JSON.parse( decodeURIComponent(negotiation.content) ) ) );
-          console.log('Candidate added successfully');
+          rtcPeer.addIceCandidate( candidate );
+          if(Cryptoblog.logging) console.log('Candidate added successfully');
         }
         catch(error)
         {
-          console.log('Candidate problems',error);
+          if(Cryptoblog.logging) console.log('Candidate problems');
+          
+          setTimeout(function(){ //You have 15 damn seconds to work, otherwise you can start doing that shit all over again
+            if( !rtcChannels[peer] || rtcChannels[peer].readyState != "open" )
+            {
+              var channel = rtcPeer.createDataChannel("cryptoblog-chat",rtcOptions);
+              setupChannel(channel, peer);
+              
+              if(Cryptoblog.logging) console.log("Recreating data channel");
+            }
+          },15000);
+          
+          //try
+          //{
+          //  rtcPeer.updateIce(rtcConfig);
+          //}
+          //catch(anything)
+          //{
+          //  //setValue("given-fucks",0);
+          //}
         }
       }
     }
     else
     {
-      console.log( peer, negotiation );
+      if(Cryptoblog.logging) console.log( peer, negotiation );
     }
   }
   
@@ -361,7 +385,7 @@ Cryptoblog.Chat = function(room,server,newroom)
   
   var addPeer = function(user)
   {
-    console.log(user + " joined the conversation");
+    if(Cryptoblog.logging) console.log(user + " joined the conversation");
     var e = new CustomEvent("cryptoblog-chat-join");
     e.data = Number(user);
     fireEventListeners("join",e);
@@ -370,7 +394,7 @@ Cryptoblog.Chat = function(room,server,newroom)
   
   var removePeer = function(user)
   {
-    console.log(user + " left the conversation");
+    if(Cryptoblog.logging) console.log(user + " left the conversation");
     var e = new CustomEvent("cryptoblog-chat-leave");
     e.data = Number(user);
     fireEventListeners("leave",e);
@@ -398,7 +422,7 @@ Cryptoblog.Chat = function(room,server,newroom)
       {url:'stun:stun.voipbuster.com'},
       {url:'stun:stun.voipstunt.com'},
       {url:'stun:stun.voxgratia.org'},
-      {url:'stun:stun.xten.com'},
+      {url:'stun:stun.xten.com'},/*
       {
         url: 'turn:numb.viagenie.ca',
         credential: 'muazkh',
@@ -413,7 +437,7 @@ Cryptoblog.Chat = function(room,server,newroom)
         url: 'turn:192.158.29.39:3478?transport=tcp',
         credential: 'JZEOEt2V3Qb0y27GRntt2u2PAYA=',
         username: '28224511:1379330808'
-      }
+      }*/
     ],
     "iceTransports":"all"
   };
@@ -474,41 +498,43 @@ Cryptoblog.Chat = function(room,server,newroom)
     if(!rps[peer])
     {
       rps[peer]={
-        "jedi":"",
-        "sith":"",
-        "local":0,
-        "remote":0
+        "jedi":[],
+        "sith":[],
+        "played":0,
+        "ended": false
       };
     }
     
     if(local)
     {
-      rps[peer].jedi = choice;
-      rps[peer].local++;
+      rps[peer].jedi.push(choice);
     }
     else
     {
-      rps[peer].sith = choice;
-      rps[peer].remote++;
+      rps[peer].sith.push(choice);
     }
     
-    if( (rps[peer].local == rps[peer].remote) && rps[peer].local )
+    while( !rps[peer].ended && ( rps[peer].jedi.length > rps[peer].played ) && ( rps[peer].sith.length > rps[peer].played ) )
     {
+      var playing = rps[peer].played;
+      
       var playables = ["rock","paper","scrissors"];
       var beats = ["paper","scrissors","rock"];
       
       var status = "lost";
       
-      if( rps[peer].jedi == rps[peer].sith )
+      if( rps[peer].jedi[playing] == rps[peer].sith[playing] )
       {
         status = "draw";
       }
-      else if( beats.indexOf( rps[peer].jedi ) == playables.indexOf( rps[peer].sith ) )
+      else if( beats.indexOf( rps[peer].jedi[playing] ) == playables.indexOf( rps[peer].sith[playing] ) )
       {
         status = "won";
       }
       
-      console.log( "Match against " + peer + ": " + rps[peer].jedi + " vs " + rps[peer].sith + ", " + status );
+      rps[peer].played+=1;
+      
+      if(Cryptoblog.logging) console.log( "Match " + playing + " against " + peer + ": " + rps[peer].jedi[playing] + " vs " + rps[peer].sith[playing] + ", " + status );
       
       if(status == "draw")
       { 
@@ -544,11 +570,9 @@ Cryptoblog.Chat = function(room,server,newroom)
       
       if(rtcChannels[message.peer] && rtcChannels[message.peer].readyState == "open")
       {
-        rtcChannels[message.peer].send(JSON.stringify(message.message));
+        rtcChannels[message.peer].send( JSON.stringify( encryptMessage( message.message, message.peer ) ) );
         messageStack.splice(messageStack.indexOf(message),1);
       }
-      
-      console.log("Sending message",message);
     }
   }
   
@@ -601,7 +625,7 @@ Cryptoblog.Chat = function(room,server,newroom)
   
   var step2 = function(message) //Well, don't do sh[\w^i]t, let the other events work too
   {
-    console.log(message); //Maybe later we could fire an event here
+    if(Cryptoblog.logging) console.log(message); //Maybe later we could fire an event here
   }
   
   var step3 = function(peer)
@@ -652,14 +676,9 @@ Cryptoblog.Chat = function(room,server,newroom)
       //console.log("Channel of peer "+peer+" opened");
       rtcOpen++;
       
-      if(!ready && rtcOpen >= otherPeers.length)
-      {
-        ready = true;
-        //console.log("I'm in");
-        
-        var e = new CustomEvent("cryptoblog-chat-ready");
-        fireEventListeners("ready",e);
-      }
+      checkReady();
+      
+      if(Cryptoblog.logging) console.log(rtcOpen, otherPeers.length);
       
       sendStack();
     }
@@ -677,12 +696,32 @@ Cryptoblog.Chat = function(room,server,newroom)
     channel.onmessage=function(event)
     {
       //console.log("Channel of peer "+peer+" got a message: "+event.data);
+      
+      var data = {
+        "data": JSON.parse(event.data),
+        "valid": true
+      };
+      
+      var message = decryptMessage(data, peer);
+      
       var e = new CustomEvent("cryptoblog-chat-receive");
-      e.data = JSON.parse(event.data);
+      e.data = message;
       e.peer = Number(peer);
       fireEventListeners("receive",e);
     }
     rtcChannels[peer]=channel;
+  }
+  
+  var checkReady = function()
+  {
+    if(!ready && rtcOpen >= otherPeers.length)
+    {
+      ready = true;
+      //console.log("I'm in");
+      
+      var e = new CustomEvent("cryptoblog-chat-ready");
+      fireEventListeners("ready",e);
+    }
   }
   
   getID(step1);
